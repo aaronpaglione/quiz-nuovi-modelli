@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="style.css">
 <style>
   body { overflow: auto; }
-  main { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; }
+  main { min-height: 100vh; min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; }
   .bar { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--soft); font-weight: 700; }
   .bar b { color: #fff; font-family: "Space Grotesk"; font-size: 18px; }
   section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; }
@@ -36,7 +36,7 @@
   .tleft i { display: block; height: 100%; background: var(--amber); width: 100%; transition: width .2s linear; }
 
   /* esito */
-  #result { position: fixed; inset: 0; z-index: 5; padding: 32px 20px; text-align: center; align-items: center; }
+  #result { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; padding: 32px 20px; text-align: center; align-items: center; }
   #result.ok { background: radial-gradient(circle at 50% 30%, #2bd36d, #15803d 70%); }
   #result.ko { background: radial-gradient(circle at 50% 30%, #f87171, #991b1b 70%); }
   #result.ko .card { animation: shake .5s; }
@@ -100,96 +100,149 @@
   </section>
 </main>
 
-<script type="module">
-import confetti from "https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/+esm";
-import { room, shape, LETTERS, esc, $ } from "./common.js";
+<div id="fatal" class="err" style="display:none;position:fixed;left:16px;right:16px;bottom:16px;background:#3b0d0d;padding:12px;border-radius:12px"></div>
+<script>
+window.onerror = function (msg) { var f = document.getElementById("fatal"); f.style.display = "block"; f.textContent = "Errore: " + msg + ". Ricarica la pagina; se continua usa un altro dispositivo."; };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script src="config.global.js"></script>
+<script>
+// Pagina giocatore in JavaScript "classico" (niente moduli, niente sintassi recente): gira anche sugli iPad datati.
+// Si collega a Supabase Realtime direttamente via WebSocket (protocollo Phoenix), senza la libreria supabase-js.
+(function () {
+  "use strict";
+  var CFG = window.QUIZ_CFG, LETTERS = ["A", "B", "C", "D"];
+  var SHAPES = ['<polygon points="50,8 95,90 5,90"/>', '<polygon points="50,4 96,50 50,96 4,50"/>', '<circle cx="50" cy="50" r="44"/>', '<rect x="10" y="10" width="80" height="80" rx="6"/>'];
+  function shape(i) { return '<span class="shape" aria-hidden="true"><svg viewBox="0 0 100 100">' + SHAPES[i] + "</svg></span>"; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function $(s) { return document.querySelector(s); }
+  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+  function fire(o) { try { if (window.confetti) window.confetti(o); } catch (e) {} }
 
-const store = { get: (k) => { try { return localStorage.getItem(k) } catch { return null } }, set: (k, v) => { try { localStorage.setItem(k, v) } catch {} } };
-const id = store.get("quiz-id") || (crypto.randomUUID?.() || String(Math.random()).slice(2));
-store.set("quiz-id", id);
-const params = new URLSearchParams(location.search);
-let code = params.get("r") || "", ch = null, st = {}, myChoice = null, tick = null, shownResult = -1;
-if (code) $("#codeRow").classList.add("hidden"); else $("#code").focus();
-$("#nick").value = store.get("quiz-nick") || "";
+  var id = get("quiz-id") || ("p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+  set("quiz-id", id);
+  var m = /[?&]r=(\d{4})/.exec(location.search), code = m ? m[1] : "";
+  var ws = null, ref = 0, topic = "", hb = null, joined = false, gotState = false, nick = "", stateTimer = null;
+  var st = {}, myChoice = null, tick = null, shownResult = -1;
 
-function show(s) { for (const x of document.querySelectorAll("main > section")) x.classList.toggle("hidden", x.id !== s); }
+  if (code) $("#codeRow").style.display = "none"; else $("#code").focus();
+  $("#nick").value = get("quiz-nick") || "";
 
-$("#go").onclick = join;
-$("#nick").onkeydown = (e) => { if (e.key === "Enter") join(); };
-function join() {
-  const nick = $("#nick").value.trim().replace(/\s+/g, " ").slice(0, 16);
-  code = code || $("#code").value.trim();
-  if (!/^\d{4}$/.test(code)) return ($("#err").textContent = "Il codice è di 4 cifre: lo trovi sul proiettore.");
-  if (nick.length < 2) return ($("#err").textContent = "Scegli un nickname di almeno 2 caratteri.");
-  store.set("quiz-nick", nick); $("#go").disabled = true; $("#err").textContent = "";
-  $("#me").textContent = nick;
-  ch = room(code, id);
-  ch.on("broadcast", { event: "state" }, ({ payload }) => apply(payload));
-  ch.subscribe((s) => {
-    if (s === "SUBSCRIBED") { ch.track({ nick }); ch.send({ type: "broadcast", event: "hello", payload: { id } }); show("wait"); }
-    if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") { $("#go").disabled = false; $("#err").textContent = "Connessione non riuscita: controlla internet e riprova."; }
-  });
-}
+  function show(s) { var x = document.querySelectorAll("main > section"); for (var k = 0; k < x.length; k++) x[k].classList.toggle("hidden", x[k].id !== s); }
+  function err(t) { $("#err").textContent = t; $("#go").disabled = false; }
 
-function apply(m) {
-  st = m;
-  const mine = m.results?.[id];
-  if (mine) $("#score").textContent = mine.score + " pt";
-  if (m.phase === "lobby") { $("#waitT").textContent = "Sei dentro!"; $("#waitP").textContent = "Guarda il proiettore: si parte tra poco."; $("#score").textContent = ""; myChoice = null; shownResult = -1; show("wait"); }
-  else if (m.phase === "question") question(m);
-  else if (m.phase === "reveal") result(m);
-  else if (m.phase === "board") { $("#waitT").textContent = m.ranks?.[id] ? `Sei ${m.ranks[id]}°` : "Classifica"; $("#waitP").textContent = "Guarda il proiettore: arriva la prossima domanda."; show("wait"); }
-  else if (m.phase === "end") end(m);
-}
+  $("#go").onclick = join;
+  $("#nick").onkeydown = function (e) { if (e.key === "Enter" || e.keyCode === 13) join(); };
+  $("#code").onkeydown = function (e) { if (e.key === "Enter" || e.keyCode === 13) $("#nick").focus(); };
 
-function question(m) {
-  if (myChoice?.i === m.i) return show("locked");
-  myChoice = null;
-  $("#qmini").textContent = `${m.i + 1}/${m.n} · ${m.text}`;
-  $("#opts").innerHTML = m.options.map((o, k) => `<button class="opt" data-i="${k}" aria-label="${LETTERS[k]}: ${esc(o)}">${shape(k)}<span>${esc(o)}</span></button>`).join("");
-  for (const b of document.querySelectorAll("#opts .opt")) b.onclick = () => answer(m.i, +b.dataset.i);
-  const end = Date.now() + m.remaining, tot = m.dur;
-  clearInterval(tick);
-  tick = setInterval(() => { const left = Math.max(0, end - Date.now()); $("#tbar").style.width = (100 * left / tot) + "%"; if (!left) clearInterval(tick); }, 200);
-  show("question");
-}
+  function join() {
+    var n = $("#nick").value.trim().replace(/\s+/g, " ").slice(0, 16);
+    var c = code || $("#code").value.trim();
+    if (!/^\d{4}$/.test(c)) return err("Il codice è di 4 cifre: lo trovi sul proiettore.");
+    if (n.length < 2) return err("Scegli un nickname di almeno 2 caratteri.");
+    if (!CFG || !window.WebSocket) return err("Questo browser non riesce a collegarsi. Prova a ricaricare.");
+    nick = n; set("quiz-nick", n); $("#me").textContent = n; $("#err").textContent = "Mi collego…"; $("#go").disabled = true;
+    if (ws && topic === "realtime:quiz-" + c) return hello();
+    code = c; connect();
+  }
 
-function answer(i, choice) {
-  if (myChoice) return;
-  myChoice = { i, choice };
-  ch.send({ type: "broadcast", event: "answer", payload: { id, i, choice, nick: store.get("quiz-nick") } });
-  navigator.vibrate?.(30);
-  $("#lockedShape").innerHTML = `<div class="opt" data-i="${choice}" style="width:110px;height:110px;margin:0 auto;justify-content:center;font-size:64px">${shape(choice)}</div>`;
-  show("locked");
-}
+  function send(event, payload, t) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: t || topic, event: event, payload: payload, ref: String(++ref) })); }
+  function hello() { send("broadcast", { type: "broadcast", event: "hello", payload: { id: id } }); }
 
-function result(m) {
-  clearInterval(tick);
-  if (shownResult === m.i) return; shownResult = m.i;
-  const r = m.results?.[id] || { ok: false, answered: false, gained: 0, score: 0, streak: 0 }, sec = $("#result");
-  sec.className = r.ok ? "ok" : "ko";
-  $("#ricon").textContent = r.ok ? "✓" : "✗";
-  $("#rtitle").textContent = r.ok ? (r.streak >= 3 ? "Inarrestabile!" : r.streak === 2 ? "Due di fila!" : "Esatto!") : r.answered ? "Sbagliato" : "Tempo scaduto";
-  $("#rgain").textContent = r.ok ? "+0" : "";
-  $("#rmeta").textContent = r.ok ? (r.streak > 1 ? `Serie ×${r.streak}: bonus velocità e serie` : "Bonus velocità incluso") : `La risposta giusta era ${LETTERS[m.correct]}`;
-  $("#rrank").textContent = m.ranks?.[id] ? `Sei ${m.ranks[id]}° · ${r.score} punti` : `${r.score} punti`;
-  show("result");
-  if (r.ok) {
-    navigator.vibrate?.([60, 40, 120]);
-    count($("#rgain"), r.gained);
-    confetti({ particleCount: 120, spread: 80, origin: { y: .35 }, colors: ["#ffffff", "#f59e0b", "#22c55e"] });
-    setTimeout(() => confetti({ particleCount: 60, spread: 120, startVelocity: 35, origin: { y: .3 } }), 350);
-  } else navigator.vibrate?.(250);
-}
-function count(el, to) { const t0 = performance.now(); (function f(t) { const k = Math.min(1, (t - t0) / 900); el.textContent = "+" + Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); })(t0); }
+  function connect() {
+    if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} }
+    topic = "realtime:quiz-" + code; joined = false; gotState = false;
+    ws = new WebSocket(CFG.url.replace(/^http/, "ws") + "/realtime/v1/websocket?apikey=" + encodeURIComponent(CFG.key) + "&vsn=1.0.0");
+    ws.onopen = function () {
+      send("phx_join", { config: { broadcast: { ack: false, self: false }, presence: { key: id }, postgres_changes: [], private: false }, access_token: CFG.key });
+      clearInterval(hb); hb = setInterval(function () { send("heartbeat", {}, "phoenix"); }, 25000);
+    };
+    ws.onmessage = function (e) {
+      var msg; try { msg = JSON.parse(e.data); } catch (x) { return; }
+      if (msg.topic !== topic) return;
+      if (msg.event === "phx_reply" && !joined && msg.payload && msg.payload.status === "ok") {
+        joined = true;
+        send("presence", { type: "presence", event: "track", payload: { nick: nick } });
+        hello();
+        clearTimeout(stateTimer);
+        // Se il proiettore non risponde, il codice è sbagliato o la partita non è aperta
+        stateTimer = setTimeout(function () { if (!gotState) { err("Partita " + code + " non trovata: controlla il codice sul proiettore."); code = /[?&]r=(\d{4})/.test(location.search) ? code : ""; $("#codeRow").style.display = ""; } }, 6000);
+      } else if (msg.event === "phx_reply" && msg.payload && msg.payload.status === "error") {
+        err("Connessione rifiutata. Ricarica la pagina e riprova.");
+      } else if (msg.event === "broadcast" && msg.payload && msg.payload.event === "state") {
+        if (!gotState) { gotState = true; $("#err").textContent = ""; }
+        apply(msg.payload.payload);
+      }
+    };
+    ws.onerror = function () {};
+    ws.onclose = function () { clearInterval(hb); if (nick) setTimeout(connect, 1500); };
+  }
 
-function end(m) {
-  const rk = m.ranks?.[id], score = m.results?.[id]?.score ?? 0;
-  $("#waitT").textContent = rk ? (rk <= 3 ? `Podio! Sei ${rk}°` : `Posizione finale: ${rk}°`) : "Fine!";
-  $("#waitP").textContent = `${score} punti. Grazie per aver giocato!`;
-  show("wait");
-  if (rk && rk <= 3) confetti({ particleCount: 200, spread: 100, origin: { y: .4 } });
-}
+  function apply(m) {
+    st = m;
+    var mine = m.results && m.results[id];
+    if (mine) $("#score").textContent = mine.score + " pt";
+    if (m.phase === "lobby") { $("#waitT").textContent = "Sei dentro!"; $("#waitP").textContent = "Guarda il proiettore: si parte tra poco."; $("#score").textContent = ""; myChoice = null; shownResult = -1; show("wait"); }
+    else if (m.phase === "question") question(m);
+    else if (m.phase === "reveal") result(m);
+    else if (m.phase === "board") { var rk = m.ranks && m.ranks[id]; $("#waitT").textContent = rk ? "Sei " + rk + "°" : "Classifica"; $("#waitP").textContent = "Guarda il proiettore: arriva la prossima domanda."; show("wait"); }
+    else if (m.phase === "end") end(m);
+  }
+
+  function question(m) {
+    if (myChoice && myChoice.i === m.i) return show("locked");
+    myChoice = null;
+    $("#qmini").textContent = (m.i + 1) + "/" + m.n + " · " + m.text;
+    var h = "";
+    for (var k = 0; k < m.options.length; k++) h += '<button class="opt" data-i="' + k + '" aria-label="' + LETTERS[k] + ": " + esc(m.options[k]) + '">' + shape(k) + "<span>" + esc(m.options[k]) + "</span></button>";
+    $("#opts").innerHTML = h;
+    var bs = document.querySelectorAll("#opts .opt");
+    for (var j = 0; j < bs.length; j++) bs[j].onclick = (function (choice) { return function () { answer(m.i, choice); }; })(j);
+    var end = Date.now() + m.remaining, tot = m.dur || 25000;
+    clearInterval(tick);
+    tick = setInterval(function () { var left = Math.max(0, end - Date.now()); $("#tbar").style.width = (100 * left / tot) + "%"; if (!left) clearInterval(tick); }, 200);
+    show("question");
+  }
+
+  function answer(i, choice) {
+    if (myChoice) return;
+    myChoice = { i: i, choice: choice };
+    send("broadcast", { type: "broadcast", event: "answer", payload: { id: id, i: i, choice: choice, nick: nick } });
+    vibrate(30);
+    $("#lockedShape").innerHTML = '<div class="opt" data-i="' + choice + '" style="width:110px;height:110px;margin:0 auto;justify-content:center;font-size:64px">' + shape(choice) + "</div>";
+    show("locked");
+  }
+
+  function result(m) {
+    clearInterval(tick);
+    if (shownResult === m.i) return; shownResult = m.i;
+    var r = (m.results && m.results[id]) || { ok: false, answered: false, gained: 0, score: 0, streak: 0 }, sec = $("#result");
+    sec.className = r.ok ? "ok" : "ko";
+    $("#ricon").textContent = r.ok ? "✓" : "✗";
+    $("#rtitle").textContent = r.ok ? (r.streak >= 3 ? "Inarrestabile!" : r.streak === 2 ? "Due di fila!" : "Esatto!") : r.answered ? "Sbagliato" : "Tempo scaduto";
+    $("#rgain").textContent = r.ok ? "+0" : "";
+    $("#rmeta").textContent = r.ok ? (r.streak > 1 ? "Serie ×" + r.streak + ": bonus velocità e serie" : "Bonus velocità incluso") : "La risposta giusta era " + LETTERS[m.correct];
+    var rk = m.ranks && m.ranks[id];
+    $("#rrank").textContent = rk ? "Sei " + rk + "° · " + r.score + " punti" : r.score + " punti";
+    show("result");
+    if (r.ok) {
+      vibrate([60, 40, 120]); count($("#rgain"), r.gained);
+      fire({ particleCount: 120, spread: 80, origin: { y: .35 }, colors: ["#ffffff", "#f59e0b", "#22c55e"] });
+      setTimeout(function () { fire({ particleCount: 60, spread: 120, startVelocity: 35, origin: { y: .3 } }); }, 350);
+    } else vibrate(250);
+  }
+  function count(el, to) { var t0 = Date.now(); (function f() { var k = Math.min(1, (Date.now() - t0) / 900); el.textContent = "+" + Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); })(); }
+
+  function end(m) {
+    var rk = m.ranks && m.ranks[id], score = m.results && m.results[id] ? m.results[id].score : 0;
+    $("#waitT").textContent = rk ? (rk <= 3 ? "Podio! Sei " + rk + "°" : "Posizione finale: " + rk + "°") : "Fine!";
+    $("#waitP").textContent = score + " punti. Grazie per aver giocato!";
+    show("wait");
+    if (rk && rk <= 3) fire({ particleCount: 200, spread: 100, origin: { y: .4 } });
+  }
+})();
 </script>
 </body>
 </html>
