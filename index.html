@@ -128,7 +128,9 @@ import { QUESTIONS, SECONDS } from "./questions.js";
 const saved = (() => { try { return JSON.parse(localStorage.getItem("quiz-host")) } catch { return null } })();
 const S = saved && Date.now() - saved.at < 6 * 3600e3 ? saved : { code: String(Math.floor(1000 + Math.random() * 9000)), players: {}, i: -1, phase: "lobby" };
 const save = () => { S.at = Date.now(); try { localStorage.setItem("quiz-host", JSON.stringify(S)) } catch {} };
-let answers = {}, qStart = 0, timer = null, online = {};
+let answers = {}, qStart = 0, timer = null, online = {}, seen = {};
+// roster = chi è in presenza + chi si è annunciato (la presenza con tanti ingressi insieme arriva in ritardo)
+const roster = () => ({ ...seen, ...online });
 
 const ch = room(S.code);
 const url = new URL("play.html?r=" + S.code, location.href).href;
@@ -139,16 +141,19 @@ ch.on("presence", { event: "sync" }, () => {
   online = {};
   for (const [id, metas] of Object.entries(ch.presenceState())) if (id !== "host") online[id] = metas[0].nick;
   for (const [id, nick] of Object.entries(online)) S.players[id] ??= { nick, score: 0, streak: 0 };
-  renderLobby(); $("#ptot").textContent = Object.keys(online).length;
+  renderLobby();
 });
-ch.on("broadcast", { event: "hello" }, () => broadcast());
+ch.on("broadcast", { event: "hello" }, ({ payload: h }) => {
+  if (h?.id && h.nick) { seen[h.id] = String(h.nick).slice(0, 16); S.players[h.id] ??= { nick: seen[h.id], score: 0, streak: 0 }; renderLobby(); }
+  broadcast();
+});
 ch.on("broadcast", { event: "answer" }, ({ payload: a }) => {
   if (S.phase !== "question" || a.i !== S.i || answers[a.id] || !(a.choice >= 0 && a.choice < 4)) return;
   S.players[a.id] ??= { nick: String(a.nick || "?").slice(0, 16), score: 0, streak: 0 };
   answers[a.id] = { choice: a.choice, ms: Date.now() - qStart };
   $("#acount").textContent = Object.keys(answers).length;
   blip(660, .05);
-  if (Object.keys(answers).length >= Object.keys(online).length) reveal();
+  if (Object.keys(answers).length >= Object.keys(roster()).length) reveal();
 });
 ch.subscribe((s) => { $("#status").textContent = s === "SUBSCRIBED" ? "Online" : "Collegamento…"; if (s === "SUBSCRIBED") { ch.track({ nick: "host" }); broadcast(); } });
 
@@ -164,11 +169,11 @@ const ranked = () => Object.entries(S.players).sort((a, b) => b[1].score - a[1].
 const ranks = () => Object.fromEntries(ranked().map(([id], k) => [id, k + 1]));
 
 function renderLobby() {
-  const ids = Object.keys(online);
-  $("#pcount").textContent = ids.length;
+  const r = roster(), ids = Object.keys(r);
+  $("#pcount").textContent = ids.length; $("#ptot").textContent = ids.length;
   const box = $("#chips"), have = new Set([...box.children].map((c) => c.dataset.id));
-  for (const id of ids) if (!have.has(id)) { const c = document.createElement("span"); c.className = "chip"; c.dataset.id = id; c.textContent = online[id]; box.append(c); blip(880, .04); }
-  for (const c of [...box.children]) if (!online[c.dataset.id]) c.remove();
+  for (const id of ids) if (!have.has(id)) { const c = document.createElement("span"); c.className = "chip"; c.dataset.id = id; c.textContent = r[id]; box.append(c); blip(880, .04); }
+  for (const c of [...box.children]) if (!r[c.dataset.id]) c.remove();
 }
 
 function ask() {

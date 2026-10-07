@@ -149,7 +149,7 @@ window.onerror = function (msg) { var f = document.getElementById("fatal"); f.st
   }
 
   function send(event, payload, t) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: t || topic, event: event, payload: payload, ref: String(++ref) })); }
-  function hello() { send("broadcast", { type: "broadcast", event: "hello", payload: { id: id } }); }
+  function hello() { send("broadcast", { type: "broadcast", event: "hello", payload: { id: id, nick: nick } }); }
 
   function connect() {
     if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} }
