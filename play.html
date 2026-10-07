@@ -125,7 +125,7 @@ function apply(m) {
   st = m;
   const mine = m.results?.[id];
   if (mine) $("#score").textContent = mine.score + " pt";
-  if (m.phase === "lobby") { show("wait"); }
+  if (m.phase === "lobby") { $("#waitT").textContent = "Sei dentro!"; $("#waitP").textContent = "Guarda il proiettore: si parte tra poco."; $("#score").textContent = ""; myChoice = null; shownResult = -1; show("wait"); }
   else if (m.phase === "question") question(m);
   else if (m.phase === "reveal") result(m);
   else if (m.phase === "board") { $("#waitT").textContent = m.ranks?.[id] ? `Sei ${m.ranks[id]}°` : "Classifica"; $("#waitP").textContent = "Guarda il proiettore: arriva la prossima domanda."; show("wait"); }

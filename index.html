@@ -114,6 +114,7 @@
   <section id="end" class="hidden">
     <h1>Il podio</h1>
     <div class="podium" id="podium"></div>
+    <button class="btn" id="home" style="position:absolute;right:4vw;bottom:4vh">Torna alla home</button>
   </section>
 </main>
 
@@ -246,6 +247,8 @@ function next() {
   else if (S.phase === "reveal") board();
 }
 $("#start").onclick = $("#next").onclick = next; $("#toBoard").onclick = board;
+// Home: nuova partita con lo stesso codice, i telefoni già collegati tornano in attesa
+$("#home").onclick = () => { localStorage.setItem("quiz-host", JSON.stringify({ code: S.code, players: {}, i: -1, phase: "lobby", at: Date.now() })); location.reload(); };
 addEventListener("keydown", (e) => {
   if (e.key === " " || e.key === "Enter" || e.key === "ArrowRight") { e.preventDefault(); next(); }
   if (e.key === "m" || e.key === "M") muted = !muted;
