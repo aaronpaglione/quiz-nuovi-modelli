@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1730">
+<title>Gioca · Nuovi Modelli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { overflow: auto; }
+  main { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; }
+  .bar { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--soft); font-weight: 700; }
+  .bar b { color: #fff; font-family: "Space Grotesk"; font-size: 18px; }
+  section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; }
+  h1 { font-size: 34px; line-height: 1.05; }
+  p.soft { color: var(--soft); font-size: 17px; line-height: 1.4; }
+  label { font-weight: 700; font-size: 15px; color: var(--soft); }
+  input { font: 700 22px "Inter"; padding: 16px; border-radius: 14px; border: 2px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06); color: #fff; width: 100%; }
+  input:focus { outline: none; border-color: var(--amber); }
+  .btn { background: var(--amber); color: #1a1205; font-weight: 800; font-size: 20px; padding: 18px; border-radius: 14px; min-height: 56px; }
+  .btn:disabled { opacity: .5; }
+  .err { color: #fca5a5; font-size: 15px; min-height: 1em; }
+  .big { font: 700 64px "Space Grotesk"; text-align: center; }
+  .center { text-align: center; }
+  .pulse { width: 90px; height: 90px; border-radius: 50%; background: var(--amber); margin: 0 auto; animation: breathe 1.6s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(.75); opacity: .5 } }
+
+  #question { justify-content: flex-start; padding-top: 8px; }
+  .qmini { font-size: 16px; line-height: 1.35; font-weight: 600; color: var(--soft); }
+  .opts { display: grid; gap: 12px; flex: 1; }
+  .opts .opt { font-size: 17px; padding: 16px; min-height: 76px; width: 100%; }
+  .opts .opt:active { transform: scale(.97); }
+  .tleft { height: 8px; background: rgba(255,255,255,.1); border-radius: 99px; overflow: hidden; }
+  .tleft i { display: block; height: 100%; background: var(--amber); width: 100%; transition: width .2s linear; }
+
+  /* esito */
+  #result { position: fixed; inset: 0; z-index: 5; padding: 32px 20px; text-align: center; align-items: center; }
+  #result.ok { background: radial-gradient(circle at 50% 30%, #2bd36d, #15803d 70%); }
+  #result.ko { background: radial-gradient(circle at 50% 30%, #f87171, #991b1b 70%); }
+  #result.ko .card { animation: shake .5s; }
+  .card { animation: pop .5s ease-out; }
+  .icon { width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.2); display: grid; place-items: center; margin: 0 auto 12px; font: 700 70px "Space Grotesk"; }
+  .gained { font: 700 54px "Space Grotesk"; }
+  .meta { font-size: 18px; font-weight: 700; opacity: .9; margin-top: 8px; }
+  .chipline { display: inline-block; background: rgba(0,0,0,.25); padding: 8px 16px; border-radius: 99px; margin-top: 14px; font-weight: 800; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"><span id="me">Nuovi modelli · Quiz</span><b id="score"></b></div>
+
+  <section id="join">
+    <h1>Entra nella sfida</h1>
+    <p class="soft">Scegli un nickname: sarà visibile a tutti sul proiettore.</p>
+    <div id="codeRow"><label for="code">Codice partita</label><input id="code" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+    <label for="nick">Nickname</label>
+    <input id="nick" maxlength="16" autocomplete="off" placeholder="es. Keynes97">
+    <button class="btn" id="go">Entra</button>
+    <div class="err" id="err" role="alert"></div>
+  </section>
+
+  <section id="wait" class="hidden center">
+    <div class="pulse"></div>
+    <h1 id="waitT">Sei dentro!</h1>
+    <p class="soft" id="waitP">Guarda il proiettore: si parte tra poco.</p>
+  </section>
+
+  <section id="question" class="hidden">
+    <div class="tleft"><i id="tbar"></i></div>
+    <div class="qmini" id="qmini"></div>
+    <div class="opts" id="opts"></div>
+  </section>
+
+  <section id="locked" class="hidden center">
+    <div class="big" id="lockedShape"></div>
+    <h1>Risposta bloccata</h1>
+    <p class="soft">Vediamo se è quella giusta…</p>
+  </section>
+
+  <section id="result" class="hidden">
+    <div class="card">
+      <div class="icon" id="ricon"></div>
+      <h1 id="rtitle"></h1>
+      <div class="gained" id="rgain"></div>
+      <div class="meta" id="rmeta"></div>
+      <div class="chipline" id="rrank"></div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+import confetti from "https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/+esm";
+import { room, shape, LETTERS, esc, $ } from "./common.js";
+
+const store = { get: (k) => { try { return localStorage.getItem(k) } catch { return null } }, set: (k, v) => { try { localStorage.setItem(k, v) } catch {} } };
+const id = store.get("quiz-id") || (crypto.randomUUID?.() || String(Math.random()).slice(2));
+store.set("quiz-id", id);
+const params = new URLSearchParams(location.search);
+let code = params.get("r") || "", ch = null, st = {}, myChoice = null, tick = null, shownResult = -1;
+if (code) $("#codeRow").classList.add("hidden"); else $("#code").focus();
+$("#nick").value = store.get("quiz-nick") || "";
+
+function show(s) { for (const x of document.querySelectorAll("main > section")) x.classList.toggle("hidden", x.id !== s); }
+
+$("#go").onclick = join;
+$("#nick").onkeydown = (e) => e.key === "Enter" && join();
+function join() {
+  const nick = $("#nick").value.trim().replace(/\s+/g, " ").slice(0, 16);
+  code = code || $("#code").value.trim();
+  if (!/^\d{4}$/.test(code)) return ($("#err").textContent = "Il codice è di 4 cifre: lo trovi sul proiettore.");
+  if (nick.length < 2) return ($("#err").textContent = "Scegli un nickname di almeno 2 caratteri.");
+  store.set("quiz-nick", nick); $("#go").disabled = true; $("#err").textContent = "";
+  $("#me").textContent = nick;
+  ch = room(code, id);
+  ch.on("broadcast", { event: "state" }, ({ payload }) => apply(payload));
+  ch.subscribe((s) => {
+    if (s === "SUBSCRIBED") { ch.track({ nick }); ch.send({ type: "broadcast", event: "hello", payload: { id } }); show("wait"); }
+    if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") { $("#go").disabled = false; $("#err").textContent = "Connessione non riuscita: controlla internet e riprova."; }
+  });
+}
+
+function apply(m) {
+  st = m;
+  const mine = m.results?.[id];
+  if (mine) $("#score").textContent = mine.score + " pt";
+  if (m.phase === "lobby") { show("wait"); }
+  else if (m.phase === "question") question(m);
+  else if (m.phase === "reveal") result(m);
+  else if (m.phase === "board") { $("#waitT").textContent = m.ranks?.[id] ? `Sei ${m.ranks[id]}°` : "Classifica"; $("#waitP").textContent = "Guarda il proiettore: arriva la prossima domanda."; show("wait"); }
+  else if (m.phase === "end") end(m);
+}
+
+function question(m) {
+  if (myChoice?.i === m.i) return show("locked");
+  myChoice = null;
+  $("#qmini").textContent = `${m.i + 1}/${m.n} · ${m.text}`;
+  $("#opts").innerHTML = m.options.map((o, k) => `<button class="opt" data-i="${k}" aria-label="${LETTERS[k]}: ${esc(o)}">${shape(k)}<span>${esc(o)}</span></button>`).join("");
+  for (const b of document.querySelectorAll("#opts .opt")) b.onclick = () => answer(m.i, +b.dataset.i);
+  const end = Date.now() + m.remaining, tot = m.dur;
+  clearInterval(tick);
+  tick = setInterval(() => { const left = Math.max(0, end - Date.now()); $("#tbar").style.width = (100 * left / tot) + "%"; if (!left) clearInterval(tick); }, 200);
+  show("question");
+}
+
+function answer(i, choice) {
+  if (myChoice) return;
+  myChoice = { i, choice };
+  ch.send({ type: "broadcast", event: "answer", payload: { id, i, choice, nick: store.get("quiz-nick") } });
+  navigator.vibrate?.(30);
+  $("#lockedShape").innerHTML = `<div class="opt" data-i="${choice}" style="width:110px;height:110px;margin:0 auto;justify-content:center;font-size:64px">${shape(choice)}</div>`;
+  show("locked");
+}
+
+function result(m) {
+  clearInterval(tick);
+  if (shownResult === m.i) return; shownResult = m.i;
+  const r = m.results?.[id] || { ok: false, answered: false, gained: 0, score: 0, streak: 0 }, sec = $("#result");
+  sec.className = r.ok ? "ok" : "ko";
+  $("#ricon").textContent = r.ok ? "✓" : "✗";
+  $("#rtitle").textContent = r.ok ? (r.streak >= 3 ? "Inarrestabile!" : r.streak === 2 ? "Due di fila!" : "Esatto!") : r.answered ? "Sbagliato" : "Tempo scaduto";
+  $("#rgain").textContent = r.ok ? "+0" : "";
+  $("#rmeta").textContent = r.ok ? (r.streak > 1 ? `Serie ×${r.streak}: bonus velocità e serie` : "Bonus velocità incluso") : `La risposta giusta era ${LETTERS[m.correct]}`;
+  $("#rrank").textContent = m.ranks?.[id] ? `Sei ${m.ranks[id]}° · ${r.score} punti` : `${r.score} punti`;
+  show("result");
+  if (r.ok) {
+    navigator.vibrate?.([60, 40, 120]);
+    count($("#rgain"), r.gained);
+    confetti({ particleCount: 120, spread: 80, origin: { y: .35 }, colors: ["#ffffff", "#f59e0b", "#22c55e"] });
+    setTimeout(() => confetti({ particleCount: 60, spread: 120, startVelocity: 35, origin: { y: .3 } }), 350);
+  } else navigator.vibrate?.(250);
+}
+function count(el, to) { const t0 = performance.now(); (function f(t) { const k = Math.min(1, (t - t0) / 900); el.textContent = "+" + Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); })(t0); }
+
+function end(m) {
+  const rk = m.ranks?.[id], score = m.results?.[id]?.score ?? 0;
+  $("#waitT").textContent = rk ? (rk <= 3 ? `Podio! Sei ${rk}°` : `Posizione finale: ${rk}°`) : "Fine!";
+  $("#waitP").textContent = `${score} punti. Grazie per aver giocato!`;
+  show("wait");
+  if (rk && rk <= 3) confetti({ particleCount: 200, spread: 100, origin: { y: .4 } });
+}
+</script>
+</body>
+</html>
